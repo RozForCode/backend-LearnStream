@@ -12,6 +12,15 @@ const resourceSchema = new mongoose.Schema({
     description: {
         type: String
     },
+    currentSkillLevel: {
+        type: String
+    },
+    learningGoal: {
+        type: String
+    },
+    targetSkillLevel: {
+        type: String
+    },
     createdAt: {
         type: Date,
         default: Date.now
