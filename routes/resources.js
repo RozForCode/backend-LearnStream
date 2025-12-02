@@ -581,9 +581,9 @@ async function scheduleSkillNotification(resource) {
       message = `Incredible ${streakCount}-day streak! Your "${resource.title}" roadmap is ready. You're unstoppable!`;
     }
 
-    // Schedule for 2 minutes from now (for demo purposes)
-    const DELAY_MINUTES = 2;
-    const scheduledFor = new Date(Date.now() + DELAY_MINUTES * 60 * 1000);
+    // Schedule for 25 seconds from now (for demo purposes)
+    const DELAY_SECONDS = 25;
+    const scheduledFor = new Date(Date.now() + DELAY_SECONDS * 1000);
 
     const notification = new ScheduledNotification({
       type: "skill_added",
@@ -601,7 +601,7 @@ async function scheduleSkillNotification(resource) {
     await notification.save();
 
     // Set up in-memory timer for this notification
-    const delay = DELAY_MINUTES * 60 * 1000;
+    const delay = DELAY_SECONDS * 1000;
     setTimeout(async () => {
       try {
         const notif = await ScheduledNotification.findById(notification._id);
@@ -623,7 +623,7 @@ async function scheduleSkillNotification(resource) {
     }, delay);
 
     console.log(
-      `📅 Notification scheduled for ${scheduledFor.toLocaleTimeString()} (in ${DELAY_MINUTES} minutes)`
+      `📅 Notification scheduled for ${scheduledFor.toLocaleTimeString()} (in ${DELAY_SECONDS} seconds)`
     );
   } catch (error) {
     console.error("Error scheduling skill notification:", error);
