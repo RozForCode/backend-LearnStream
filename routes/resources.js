@@ -1,6 +1,9 @@
 const express = require("express");
 const router = express.Router();
+const crypto = require("crypto");
 const Resource = require("../models/Resource");
+const UserProgress = require("../models/UserProgress");
+const ScheduledNotification = require("../models/ScheduledNotification");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { validateResourcesInParallel } = require("../utils/urlValidation");
 
@@ -523,11 +526,109 @@ router.post("/", async (req, res) => {
       console.error("Background resource gathering failed:", err);
     });
 
+    // Phase 3: Schedule a notification reminder (2 minutes after skill creation)
+    scheduleSkillNotification(newResource).catch((err) => {
+      console.error("Failed to schedule notification:", err);
+    });
+
+    // Track activity for roadmap creation
+    try {
+      let progress = await UserProgress.findOne({ oderId: "default" });
+      if (!progress) {
+        progress = new UserProgress({ oderId: "default" });
+      }
+      progress.addActivity(
+        "roadmap_created",
+        newResource._id,
+        null,
+        `Created roadmap: ${newResource.title}`
+      );
+      progress.checkAchievements();
+      await progress.save();
+    } catch (e) {
+      console.error("Failed to track roadmap creation activity:", e);
+    }
+
     res.status(201).json(newResource);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
 });
+
+/**
+ * Schedule a notification reminder after adding a skill
+ */
+async function scheduleSkillNotification(resource) {
+  try {
+    // Get current streak info
+    let progress = await UserProgress.findOne({ oderId: "default" });
+    const streakCount = progress?.currentStreak || 0;
+
+    // Create motivational message based on streak
+    let title, message;
+
+    if (streakCount === 0) {
+      title = "🚀 Start Your Learning Journey!";
+      message = `Your "${resource.title}" roadmap is ready with ${resource.learningPath.length} steps! Complete your first step to start building your streak.`;
+    } else if (streakCount < 3) {
+      title = "🔥 Keep the Momentum Going!";
+      message = `You're on a ${streakCount}-day streak! Your new "${resource.title}" roadmap awaits with ${resource.learningPath.length} steps. Don't break the chain!`;
+    } else if (streakCount < 7) {
+      title = "⚡ You're on Fire!";
+      message = `Amazing ${streakCount}-day streak! Check out your new "${resource.title}" roadmap and keep crushing it!`;
+    } else {
+      title = "🏆 Streak Champion!";
+      message = `Incredible ${streakCount}-day streak! Your "${resource.title}" roadmap is ready. You're unstoppable!`;
+    }
+
+    // Schedule for 2 minutes from now (for demo purposes)
+    const DELAY_MINUTES = 2;
+    const scheduledFor = new Date(Date.now() + DELAY_MINUTES * 60 * 1000);
+
+    const notification = new ScheduledNotification({
+      type: "skill_added",
+      title,
+      message,
+      scheduledFor,
+      metadata: {
+        roadmapId: resource._id,
+        roadmapTitle: resource.title,
+        category: resource.category,
+        streakCount,
+      },
+    });
+
+    await notification.save();
+
+    // Set up in-memory timer for this notification
+    const delay = DELAY_MINUTES * 60 * 1000;
+    setTimeout(async () => {
+      try {
+        const notif = await ScheduledNotification.findById(notification._id);
+        if (notif && notif.status === "pending") {
+          notif.status = "sent";
+          notif.sentAt = new Date();
+          await notif.save();
+
+          console.log(`\n🔔 ========================================`);
+          console.log(`🔔 PUSH NOTIFICATION!`);
+          console.log(`🔔 Title: ${notif.title}`);
+          console.log(`🔔 Message: ${notif.message}`);
+          console.log(`🔔 Roadmap: ${notif.metadata.roadmapTitle}`);
+          console.log(`🔔 ========================================\n`);
+        }
+      } catch (error) {
+        console.error("Error triggering scheduled notification:", error);
+      }
+    }, delay);
+
+    console.log(
+      `📅 Notification scheduled for ${scheduledFor.toLocaleTimeString()} (in ${DELAY_MINUTES} minutes)`
+    );
+  } catch (error) {
+    console.error("Error scheduling skill notification:", error);
+  }
+}
 
 // PATCH update a step's completion status
 router.patch("/:id/steps/:stepId", async (req, res) => {
@@ -679,6 +780,312 @@ FORMAT:
   } catch (err) {
     console.error("Error extending roadmap:", err);
     res.status(400).json({ message: err.message });
+  }
+});
+
+// ============================================
+// NOTES ENDPOINTS
+// ============================================
+
+/**
+ * POST /api/resources/:id/steps/:stepId/notes
+ * Add a note to a specific step
+ */
+router.post("/:id/steps/:stepId/notes", async (req, res) => {
+  try {
+    const { content } = req.body;
+
+    if (!content || content.trim().length === 0) {
+      return res.status(400).json({ message: "Note content is required" });
+    }
+
+    const resource = await Resource.findById(req.params.id);
+    if (!resource) {
+      return res.status(404).json({ message: "Resource not found" });
+    }
+
+    const step = resource.learningPath.id(req.params.stepId);
+    if (!step) {
+      return res.status(404).json({ message: "Step not found" });
+    }
+
+    const newNote = {
+      content: content.trim(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    step.notes.push(newNote);
+    await resource.save();
+
+    // Track activity
+    try {
+      let progress = await UserProgress.findOne({ oderId: "default" });
+      if (!progress) {
+        progress = new UserProgress({ oderId: "default" });
+      }
+      progress.addActivity(
+        "note_added",
+        resource._id,
+        step._id,
+        `Note added to "${step.title}"`
+      );
+      progress.checkAchievements();
+      await progress.save();
+    } catch (e) {
+      console.error("Failed to track note activity:", e);
+    }
+
+    res.json({
+      message: "Note added successfully",
+      note: step.notes[step.notes.length - 1],
+    });
+  } catch (err) {
+    console.error("Error adding note:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/**
+ * PUT /api/resources/:id/steps/:stepId/notes/:noteId
+ * Update a note
+ */
+router.put("/:id/steps/:stepId/notes/:noteId", async (req, res) => {
+  try {
+    const { content } = req.body;
+
+    if (!content || content.trim().length === 0) {
+      return res.status(400).json({ message: "Note content is required" });
+    }
+
+    const resource = await Resource.findById(req.params.id);
+    if (!resource) {
+      return res.status(404).json({ message: "Resource not found" });
+    }
+
+    const step = resource.learningPath.id(req.params.stepId);
+    if (!step) {
+      return res.status(404).json({ message: "Step not found" });
+    }
+
+    const note = step.notes.id(req.params.noteId);
+    if (!note) {
+      return res.status(404).json({ message: "Note not found" });
+    }
+
+    note.content = content.trim();
+    note.updatedAt = new Date();
+    await resource.save();
+
+    res.json({
+      message: "Note updated successfully",
+      note,
+    });
+  } catch (err) {
+    console.error("Error updating note:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/**
+ * DELETE /api/resources/:id/steps/:stepId/notes/:noteId
+ * Delete a note
+ */
+router.delete("/:id/steps/:stepId/notes/:noteId", async (req, res) => {
+  try {
+    const resource = await Resource.findById(req.params.id);
+    if (!resource) {
+      return res.status(404).json({ message: "Resource not found" });
+    }
+
+    const step = resource.learningPath.id(req.params.stepId);
+    if (!step) {
+      return res.status(404).json({ message: "Step not found" });
+    }
+
+    const noteIndex = step.notes.findIndex(
+      (n) => n._id.toString() === req.params.noteId
+    );
+    if (noteIndex === -1) {
+      return res.status(404).json({ message: "Note not found" });
+    }
+
+    step.notes.splice(noteIndex, 1);
+    await resource.save();
+
+    res.json({ message: "Note deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting note:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ============================================
+// BOOKMARK ENDPOINTS
+// ============================================
+
+/**
+ * PATCH /api/resources/:id/steps/:stepId/bookmark
+ * Toggle bookmark status for a step
+ */
+router.patch("/:id/steps/:stepId/bookmark", async (req, res) => {
+  try {
+    const resource = await Resource.findById(req.params.id);
+    if (!resource) {
+      return res.status(404).json({ message: "Resource not found" });
+    }
+
+    const step = resource.learningPath.id(req.params.stepId);
+    if (!step) {
+      return res.status(404).json({ message: "Step not found" });
+    }
+
+    step.bookmarked = !step.bookmarked;
+    await resource.save();
+
+    res.json({
+      message: step.bookmarked ? "Step bookmarked" : "Bookmark removed",
+      bookmarked: step.bookmarked,
+    });
+  } catch (err) {
+    console.error("Error toggling bookmark:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/**
+ * GET /api/resources/bookmarks
+ * Get all bookmarked steps across all roadmaps
+ */
+router.get("/bookmarks", async (req, res) => {
+  try {
+    const resources = await Resource.find({
+      "learningPath.bookmarked": true,
+    });
+
+    const bookmarks = [];
+    resources.forEach((resource) => {
+      resource.learningPath
+        .filter((step) => step.bookmarked)
+        .forEach((step) => {
+          bookmarks.push({
+            roadmapId: resource._id,
+            roadmapTitle: resource.title,
+            stepId: step._id,
+            stepTitle: step.title,
+            stepDescription: step.description,
+            notes: step.notes,
+          });
+        });
+    });
+
+    res.json({ bookmarks });
+  } catch (err) {
+    console.error("Error fetching bookmarks:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ============================================
+// SHARING ENDPOINTS
+// ============================================
+
+/**
+ * POST /api/resources/:id/share
+ * Generate a shareable link for a roadmap
+ */
+router.post("/:id/share", async (req, res) => {
+  try {
+    const resource = await Resource.findById(req.params.id);
+    if (!resource) {
+      return res.status(404).json({ message: "Resource not found" });
+    }
+
+    // Generate share ID if not exists
+    if (!resource.shareId) {
+      resource.shareId = crypto.randomBytes(8).toString("hex");
+    }
+    resource.isPublic = true;
+    await resource.save();
+
+    const shareUrl = `${req.protocol}://${req.get(
+      "host"
+    )}/api/resources/shared/${resource.shareId}`;
+
+    res.json({
+      shareId: resource.shareId,
+      shareUrl,
+      message: "Roadmap is now shareable",
+    });
+  } catch (err) {
+    console.error("Error generating share link:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/**
+ * DELETE /api/resources/:id/share
+ * Remove sharing for a roadmap
+ */
+router.delete("/:id/share", async (req, res) => {
+  try {
+    const resource = await Resource.findById(req.params.id);
+    if (!resource) {
+      return res.status(404).json({ message: "Resource not found" });
+    }
+
+    resource.isPublic = false;
+    await resource.save();
+
+    res.json({ message: "Sharing disabled" });
+  } catch (err) {
+    console.error("Error disabling sharing:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/**
+ * GET /api/resources/shared/:shareId
+ * Get a shared roadmap (public access)
+ */
+router.get("/shared/:shareId", async (req, res) => {
+  try {
+    const resource = await Resource.findOne({
+      shareId: req.params.shareId,
+      isPublic: true,
+    });
+
+    if (!resource) {
+      return res
+        .status(404)
+        .json({ message: "Shared roadmap not found or no longer public" });
+    }
+
+    // Return sanitized version (no personal notes)
+    const publicRoadmap = {
+      title: resource.title,
+      category: resource.category,
+      description: resource.description,
+      currentSkillLevel: resource.currentSkillLevel,
+      learningGoal: resource.learningGoal,
+      targetSkillLevel: resource.targetSkillLevel,
+      learningPath: resource.learningPath.map((step) => ({
+        title: step.title,
+        description: step.description,
+        estimatedTime: step.estimatedTime,
+        resources: step.resources,
+        completed: step.completed,
+        // Exclude personal notes from shared view
+      })),
+      totalSteps: resource.learningPath.length,
+      completedSteps: resource.learningPath.filter((s) => s.completed).length,
+      createdAt: resource.createdAt,
+    };
+
+    res.json(publicRoadmap);
+  } catch (err) {
+    console.error("Error fetching shared roadmap:", err);
+    res.status(500).json({ message: err.message });
   }
 });
 
