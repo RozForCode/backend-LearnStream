@@ -19,9 +19,11 @@ mongoose
 // Routes
 const topicsRouter = require("./routes/topics");
 const resourcesRouter = require("./routes/resources");
+const aiAssistantRouter = require("./routes/ai-assistant");
 
 app.use("/api/topics", topicsRouter);
 app.use("/api/resources", resourcesRouter);
+app.use("/api/ai-assistant", aiAssistantRouter);
 
 app.get("/", (req, res) => {
   res.send("LearnStream API is running");
