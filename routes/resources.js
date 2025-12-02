@@ -682,4 +682,6 @@ FORMAT:
   }
 });
 
+// Export both the router and the gatherAndValidateResources function
 module.exports = router;
+module.exports.gatherAndValidateResources = gatherAndValidateResources;
