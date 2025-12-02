@@ -25,6 +25,21 @@ const resourceLinkSchema = new mongoose.Schema({
   },
 });
 
+const noteSchema = new mongoose.Schema({
+  content: {
+    type: String,
+    required: true,
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
 const learningStepSchema = new mongoose.Schema(
   {
     title: {
@@ -34,6 +49,10 @@ const learningStepSchema = new mongoose.Schema(
     completed: {
       type: Boolean,
       default: false,
+    },
+    completedAt: {
+      type: Date,
+      default: null,
     },
     description: {
       type: String,
@@ -51,6 +70,14 @@ const learningStepSchema = new mongoose.Schema(
       type: String,
       enum: ["pending", "loading", "ready", "failed"],
       default: "pending",
+    },
+    notes: {
+      type: [noteSchema],
+      default: [],
+    },
+    bookmarked: {
+      type: Boolean,
+      default: false,
     },
   },
   { _id: true }
@@ -85,6 +112,16 @@ const resourceSchema = new mongoose.Schema({
     type: String,
     enum: ["pending", "loading", "ready", "failed"],
     default: "pending",
+  },
+  // Sharing features
+  shareId: {
+    type: String,
+    unique: true,
+    sparse: true, // Allow null values
+  },
+  isPublic: {
+    type: Boolean,
+    default: false,
   },
   createdAt: {
     type: Date,
